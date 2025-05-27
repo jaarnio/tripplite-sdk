@@ -16,7 +16,10 @@
     "build": "babel src -d dist --copy-files",
     "prepare": "npm run build",
     "docs": "jsdoc -c jsdoc.json",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "ws:start": "node websocket-server/start-server.js",
+    "ws:test": "node websocket-server/tests/client-test.js",
+    "ws:dev": "ENABLE_DEBUG=true LOG_LEVEL=debug node websocket-server/start-server.js"
   },
   "keywords": [
     "tripplite",
@@ -29,7 +32,8 @@
   "license": "MIT",
   "dependencies": {
     "axios": "^1.6.7",
-    "dotenv": "^16.0.0"
+    "dotenv": "^16.0.0",
+    "ws": "^8.14.0"
   },
   "devDependencies": {
     "@babel/cli": "^7.23.9",
