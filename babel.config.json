@@ -1,0 +1,5 @@
+{
+  "presets": ["@babel/preset-env"],
+  "ignore": ["**/*.test.js", "**/__tests__"],
+  "sourceMaps": true
+} 
