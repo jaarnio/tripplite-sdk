@@ -3,10 +3,12 @@ const WebSocket = require('ws');
 const { v4: uuidv4 } = require('crypto').randomUUID || (() => Math.random().toString(36));
 const config = require('./config');
 const SubscriptionManager = require('./subscription-manager');
+const PDUPoller = require('./pdu-poller');
 
 class TrippliteWebSocketServer {
     constructor() {
         this.subscriptionManager = new SubscriptionManager();
+        this.pduPoller = new PDUPoller(this);
         this.server = null;
         this.isRunning = false;
         
@@ -22,43 +24,58 @@ class TrippliteWebSocketServer {
     /**
      * Start the WebSocket server
      */
-    start() {
+    async start() {
         if (this.isRunning) {
             this.log('warn', 'Server is already running');
             return;
         }
 
-        this.log('info', `Starting WebSocket server on port ${config.wsPort}`);
-        this.log('info', `Configuration: ${JSON.stringify(config.getSummary(), null, 2)}`);
+        try {
+            this.log('info', `Starting WebSocket server on port ${config.wsPort}`);
+            this.log('info', `Configuration: ${JSON.stringify(config.getSummary(), null, 2)}`);
 
-        this.server = new WebSocket.Server({ 
-            port: config.wsPort,
-            maxPayload: 16 * 1024, // 16KB max message size
-        });
+            this.server = new WebSocket.Server({ 
+                port: config.wsPort,
+                maxPayload: 16 * 1024, // 16KB max message size
+            });
 
-        this.server.on('connection', (ws, req) => {
-            this.handleConnection(ws, req);
-        });
+            this.server.on('connection', (ws, req) => {
+                this.handleConnection(ws, req);
+            });
 
-        this.server.on('error', (error) => {
-            this.log('error', `Server error: ${error.message}`);
-        });
+            this.server.on('error', (error) => {
+                this.log('error', `Server error: ${error.message}`);
+            });
 
-        this.isRunning = true;
-        this.stats.startTime = new Date();
-        this.log('info', `WebSocket server started successfully on ws://localhost:${config.wsPort}`);
+            this.isRunning = true;
+            this.stats.startTime = new Date();
+            this.log('info', `WebSocket server started successfully on ws://localhost:${config.wsPort}`);
+
+            // Start PDU poller
+            this.log('info', 'Starting PDU poller...');
+            await this.pduPoller.start();
+            this.log('info', 'PDU poller started successfully');
+
+        } catch (error) {
+            this.log('error', `Failed to start server: ${error.message}`);
+            this.isRunning = false;
+            throw error;
+        }
     }
 
     /**
      * Stop the WebSocket server
      */
-    stop() {
+    async stop() {
         if (!this.isRunning) {
             this.log('warn', 'Server is not running');
             return;
         }
 
         this.log('info', 'Stopping WebSocket server...');
+        
+        // Stop PDU poller first
+        await this.pduPoller.stop();
         
         // Close all client connections
         this.server.clients.forEach(ws => {
@@ -159,7 +176,6 @@ class TrippliteWebSocketServer {
                     break;
                     
                 case 'action':
-                    // This will be handled by PDU poller in Phase 1b
                     this.handleAction(clientId, message);
                     break;
                     
@@ -204,14 +220,17 @@ class TrippliteWebSocketServer {
             return;
         }
 
-        // Send subscription confirmation with current states
-        // Note: In Phase 1b, we'll get actual states from PDU
-        const currentStates = subscribedLoads.map(loadId => ({
-            loadId: loadId,
-            name: `Load${loadId.padStart(2, '0')}`,
-            state: 'LOAD_STATE_UNKNOWN', // Placeholder until PDU integration
-            lastUpdated: new Date().toISOString()
-        }));
+        // Get real current states from PDU poller
+        const currentStates = subscribedLoads.map(loadId => {
+            const pduState = this.pduPoller.getCurrentLoadState(loadId);
+            return {
+                loadId: loadId,
+                name: pduState ? pduState.name : `Load${loadId.padStart(2, '0')}`,
+                description: pduState ? pduState.description : `Load ${loadId}`,
+                state: pduState ? pduState.state : 'LOAD_STATE_UNKNOWN',
+                lastUpdated: pduState ? pduState.lastUpdated : new Date().toISOString()
+            };
+        });
 
         this.sendToClient(clientId, {
             type: 'subscribed',
@@ -269,19 +288,69 @@ class TrippliteWebSocketServer {
     }
 
     /**
-     * Handle action request (placeholder for Phase 1b)
+     * Handle action request - now fully implemented
      * @param {string} clientId - Client identifier
      * @param {Object} message - Action message
      */
-    handleAction(clientId, message) {
-        // Placeholder implementation
-        this.sendToClient(clientId, {
-            type: 'actionResult',
-            success: false,
-            error: 'PDU actions not yet implemented - coming in Phase 1b',
-            originalMessage: message,
-            timestamp: new Date().toISOString()
-        });
+    async handleAction(clientId, message) {
+        // Validate message format
+        if (!message.loadId || !message.action) {
+            this.sendToClient(clientId, {
+                type: 'actionResult',
+                success: false,
+                error: 'loadId and action are required',
+                timestamp: new Date().toISOString()
+            });
+            return;
+        }
+
+        // Validate action type
+        const validActions = ['on', 'off', 'cycle'];
+        if (!validActions.includes(message.action)) {
+            this.sendToClient(clientId, {
+                type: 'actionResult',
+                success: false,
+                error: `Invalid action. Must be one of: ${validActions.join(', ')}`,
+                timestamp: new Date().toISOString()
+            });
+            return;
+        }
+
+        try {
+            this.log('info', `Client ${clientId} requesting action "${message.action}" on load ${message.loadId}`);
+            
+            // Perform action through PDU poller
+            const result = await this.pduPoller.performLoadAction(
+                message.loadId, 
+                message.action, 
+                message.byName || false
+            );
+
+            // Send success response to requesting client
+            this.sendToClient(clientId, {
+                type: 'actionResult',
+                loadId: message.loadId,
+                action: message.action,
+                success: true,
+                result: result,
+                timestamp: new Date().toISOString()
+            });
+
+            this.log('info', `Action "${message.action}" on load ${message.loadId} completed successfully`);
+
+        } catch (error) {
+            this.log('error', `Action "${message.action}" on load ${message.loadId} failed: ${error.message}`);
+            
+            // Send error response to requesting client
+            this.sendToClient(clientId, {
+                type: 'actionResult',
+                loadId: message.loadId,
+                action: message.action,
+                success: false,
+                error: error.message,
+                timestamp: new Date().toISOString()
+            });
+        }
     }
 
     /**
@@ -299,20 +368,29 @@ class TrippliteWebSocketServer {
 
     /**
      * Broadcast state change to subscribed clients
-     * @param {string} loadId - Load identifier
-     * @param {Object} stateChange - State change data
+     * @param {string} loadId - Load ID that changed
+     * @param {Object} stateChange - State change details
      */
     broadcastStateChange(loadId, stateChange) {
-        const message = {
-            type: 'stateChange',
-            loadId: loadId,
-            ...stateChange,
-            timestamp: new Date().toISOString()
-        };
+        const subscribedClients = this.subscriptionManager.getClientsForLoad(loadId);
+        
+        if (subscribedClients.length > 0) {
+            const message = {
+                type: 'stateChange',
+                loadId: loadId,
+                name: stateChange.name,
+                description: stateChange.description,
+                previousState: stateChange.previousState,
+                currentState: stateChange.currentState,
+                timestamp: stateChange.timestamp
+            };
 
-        const sentCount = this.subscriptionManager.broadcastToLoad(loadId, message);
-        this.stats.messagesSent += sentCount;
-        return sentCount;
+            subscribedClients.forEach(clientId => {
+                this.sendToClient(clientId, message);
+            });
+
+            this.log('info', `Broadcasted state change for load ${loadId} to ${subscribedClients.length} clients`);
+        }
     }
 
     /**
@@ -324,16 +402,27 @@ class TrippliteWebSocketServer {
     }
 
     /**
-     * Get server statistics
+     * Get detailed server statistics including PDU poller stats
      */
     getStats() {
+        const uptime = this.stats.startTime ? Date.now() - this.stats.startTime.getTime() : 0;
+        const subscriptionStats = this.subscriptionManager.getStats();
+        const pduStats = this.pduPoller.getStats();
+        
         return {
             server: {
-                ...this.stats,
-                uptime: this.stats.startTime ? Date.now() - this.stats.startTime.getTime() : 0,
-                isRunning: this.isRunning
+                isRunning: this.isRunning,
+                port: config.wsPort,
+                uptime: uptime,
+                startTime: this.stats.startTime,
+                messagesReceived: this.stats.messagesReceived,
+                messagesSent: this.stats.messagesSent,
+                connectionsTotal: this.stats.connectionsTotal,
+                activeConnections: this.server ? this.server.clients.size : 0
             },
-            subscriptions: this.subscriptionManager.getStats()
+            subscriptions: subscriptionStats,
+            pdu: pduStats,
+            config: config.getSummary()
         };
     }
 

@@ -1,234 +1,662 @@
-# Tripplite PDU SDK
+# Tripplite PDU SDK with WebSocket Server
 
-A JavaScript SDK for interacting with Tripplite PDU (Power Distribution Unit) devices.
+A comprehensive Node.js SDK for interacting with Tripplite PDU devices, featuring a real-time WebSocket server for building monitoring dashboards and applications.
 
-## Installation
+## ✨ Features
 
+- **🔌 Direct PDU Integration** - Connect to Tripplite PDU devices via HTTP/HTTPS
+- **🌐 Real-time WebSocket Server** - Live monitoring with up to 16 concurrent clients
+- **⚡ Load Control** - Turn loads on/off/cycle with instant feedback
+- **🔄 Auto-reconnection** - Handles authentication token expiration automatically
+- **📊 Load-specific Subscriptions** - Efficient updates only for loads you care about
+- **🛡️ Robust Error Handling** - Comprehensive retry logic and graceful failures
+- **🔧 Easy Configuration** - Environment variables for seamless deployment
+
+---
+
+## 🚀 Quick Start
+
+### Server-Side Setup (Deploy the WebSocket Server)
+
+**1. Install the package:**
 ```bash
 npm install @jaarnio/tripplite-pdu-sdk
 ```
 
-## Configuration
-
-You can configure the SDK in two ways:
-
-### 1. Constructor Options (Explicit Configuration)
-
-```javascript
-const TripplitePDU = require('@jaarnio/tripplite-pdu-sdk');
-
-const pdu = new TripplitePDU({
-  host: '192.168.1.100',  // Required: IP address or hostname of your PDU device
-  port: 443,              // Optional: Port number (default: 443)
-  username: 'admin',      // Required: Username for authentication
-  password: 'password',   // Required: Password for authentication
-  deviceId: 1             // Optional: Device ID (default: 1)
-});
-```
-
-### 2. Environment Variables
-
-Create a `.env` file in your project root (copy from `.env.example` included in this package):
-
-```env
-# Tripplite PDU Configuration
+**2. Create environment configuration:**
+```bash
+# .env file
 TRIPPLITE_PDU_HOST=192.168.1.100
 TRIPPLITE_PDU_PORT=443
-TRIPPLITE_PDU_USERNAME=admin
-TRIPPLITE_PDU_PASSWORD=your_password_here
-TRIPPLITE_PDU_DEVICE_ID=1
+TRIPPLITE_PDU_USERNAME=your_username
+TRIPPLITE_PDU_PASSWORD=your_password
+TRIPPLITE_PDU_DEVICE_ID=your_device_id
+
+# WebSocket server settings (optional)
+WS_PORT=8081
+WS_MAX_CLIENTS=16
+PDU_POLL_INTERVAL=5000
 ```
 
-Then create the client without options:
+**3. Start the WebSocket server:**
+```bash
+# Using npm script
+npm run server
 
-```javascript
-const TripplitePDU = require('@jaarnio/tripplite-pdu-sdk');
+# Or directly
+npx tripplite-server
 
-// Configuration will be loaded from environment variables
-const pdu = new TripplitePDU();
+# Development mode with debug logging
+npm run server:dev
 ```
 
-### 3. Mixed Configuration
+The server will:
+- ✅ Connect to your PDU
+- ✅ Start polling for state changes every 5 seconds
+- ✅ Accept WebSocket connections on port 8081
+- ✅ Handle up to 16 concurrent clients
 
-You can also mix both approaches - constructor options will override environment variables:
+---
+
+### Client-Side Integration (Build Dashboards/Apps)
+
+**1. Install the client SDK:**
+```bash
+npm install @jaarnio/tripplite-pdu-sdk
+```
+
+**2. Create a simple monitoring client:**
+```javascript
+const TripplitePDUClient = require('@jaarnio/tripplite-pdu-sdk/websocket-server/client-sdk');
+
+const client = new TripplitePDUClient({
+    url: 'ws://your-server:8081',
+    onConnect: () => console.log('Connected to PDU server!'),
+    onStateChange: (change) => {
+        console.log(`Load ${change.loadId}: ${change.previousState} → ${change.currentState}`);
+        updateDashboard(change);
+    },
+    onActionResult: (result) => {
+        console.log(`Action ${result.action} on Load ${result.loadId}: ${result.success ? 'SUCCESS' : 'FAILED'}`);
+    }
+});
+
+// Connect and subscribe to specific loads
+async function start() {
+    await client.connect();
+    
+    // Monitor loads 1, 2, and 3
+    client.subscribe([1, 2, 3]);
+    
+    // Control a load
+    client.sendAction(1, 'on');   // Turn load 1 ON
+    client.sendAction(2, 'off');  // Turn load 2 OFF
+    client.sendAction(3, 'cycle'); // Cycle load 3 (if currently ON)
+}
+
+start();
+```
+
+---
+
+## 📋 Usage Examples
+
+### Building a Web Dashboard
+
+**HTML:**
+```html
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PDU Dashboard</title>
+    <style>
+        .load { margin: 10px; padding: 15px; border: 1px solid #ccc; }
+        .load.on { background-color: #d4edda; }
+        .load.off { background-color: #f8d7da; }
+        button { margin: 5px; padding: 5px 10px; }
+    </style>
+</head>
+<body>
+    <h1>PDU Load Dashboard</h1>
+    <div id="loads"></div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/ws@8/browser.js"></script>
+    <script>
+        class PDUDashboard {
+            constructor() {
+                this.ws = new WebSocket('ws://localhost:8081');
+                this.loads = new Map();
+                this.setupEventHandlers();
+            }
+
+            setupEventHandlers() {
+                this.ws.onmessage = (event) => {
+                    const message = JSON.parse(event.data);
+                    
+                    if (message.type === 'welcome') {
+                        this.subscribe([1, 2, 3, 4, 5, 6, 7, 8]);
+                    } else if (message.type === 'subscribed') {
+                        this.renderLoads(message.currentStates);
+                    } else if (message.type === 'stateChange') {
+                        this.updateLoad(message);
+                    }
+                };
+            }
+
+            subscribe(loadIds) {
+                this.ws.send(JSON.stringify({
+                    type: 'subscribe',
+                    loadIds: loadIds
+                }));
+            }
+
+            sendAction(loadId, action) {
+                this.ws.send(JSON.stringify({
+                    type: 'action',
+                    loadId: loadId,
+                    action: action
+                }));
+            }
+
+            renderLoads(states) {
+                const container = document.getElementById('loads');
+                container.innerHTML = '';
+                
+                states.forEach(load => {
+                    this.loads.set(load.loadId, load);
+                    const div = this.createLoadElement(load);
+                    container.appendChild(div);
+                });
+            }
+
+            createLoadElement(load) {
+                const div = document.createElement('div');
+                div.className = `load ${load.state === 'LOAD_STATE_ON' ? 'on' : 'off'}`;
+                div.id = `load-${load.loadId}`;
+                
+                const isOn = load.state === 'LOAD_STATE_ON';
+                div.innerHTML = `
+                    <h3>Load ${load.loadId} - ${load.name}</h3>
+                    <p>Status: <strong>${isOn ? 'ON' : 'OFF'}</strong></p>
+                    <button onclick="dashboard.sendAction('${load.loadId}', 'on')">Turn ON</button>
+                    <button onclick="dashboard.sendAction('${load.loadId}', 'off')">Turn OFF</button>
+                    ${isOn ? `<button onclick="dashboard.sendAction('${load.loadId}', 'cycle')">CYCLE</button>` : ''}
+                `;
+                
+                return div;
+            }
+
+            updateLoad(change) {
+                const element = document.getElementById(`load-${change.loadId}`);
+                if (element) {
+                    const load = this.loads.get(change.loadId);
+                    load.state = change.currentState;
+                    element.outerHTML = this.createLoadElement(load).outerHTML;
+                }
+            }
+        }
+
+        const dashboard = new PDUDashboard();
+    </script>
+</body>
+</html>
+```
+
+### Node.js Monitoring Service
 
 ```javascript
-const TripplitePDU = require('@jaarnio/tripplite-pdu-sdk');
+const TripplitePDUClient = require('@jaarnio/tripplite-pdu-sdk/websocket-server/client-sdk');
 
-// Use environment variables for most config, but override host
-const pdu = new TripplitePDU({
-  host: '192.168.1.200'  // This will override TRIPPLITE_PDU_HOST
+class PDUMonitoringService {
+    constructor() {
+        this.client = new TripplitePDUClient({
+            url: 'ws://pdu-server:8081',
+            onConnect: () => this.onConnect(),
+            onStateChange: (change) => this.handleStateChange(change),
+            onPDUStatus: (status) => this.handlePDUStatus(status),
+            onError: (error) => this.handleError(error)
+        });
+        
+        this.alertThresholds = new Map();
+        this.setupAlerts();
+    }
+
+    async start() {
+        await this.client.connect();
+        
+        // Monitor critical loads
+        this.client.subscribe([1, 2, 3, 4, 5, 6, 7, 8]);
+        
+        console.log('PDU Monitoring Service started');
+    }
+
+    setupAlerts() {
+        // Set up alert conditions
+        this.alertThresholds.set('1', { critical: true, name: 'Main Server' });
+        this.alertThresholds.set('2', { critical: true, name: 'Network Switch' });
+        this.alertThresholds.set('3', { critical: false, name: 'Backup System' });
+    }
+
+    handleStateChange(change) {
+        const alert = this.alertThresholds.get(change.loadId);
+        
+        if (alert && change.currentState === 'LOAD_STATE_OFF') {
+            this.sendAlert({
+                severity: alert.critical ? 'CRITICAL' : 'WARNING',
+                message: `${alert.name} (Load ${change.loadId}) has turned OFF`,
+                timestamp: change.timestamp
+            });
+        }
+        
+        // Log all changes
+        console.log(`[${change.timestamp}] Load ${change.loadId} (${change.name}): ${change.previousState} → ${change.currentState}`);
+    }
+
+    handlePDUStatus(status) {
+        if (status.status === 'disconnected') {
+            this.sendAlert({
+                severity: 'CRITICAL',
+                message: `PDU connection lost: ${status.error}`,
+                timestamp: status.timestamp
+            });
+        } else if (status.status === 'connected') {
+            console.log(`PDU reconnected: ${status.message}`);
+        }
+    }
+
+    sendAlert(alert) {
+        console.error(`🚨 ${alert.severity}: ${alert.message}`);
+        
+        // Here you could integrate with:
+        // - Email notifications
+        // - Slack/Teams webhooks
+        // - SMS alerts
+        // - Monitoring systems (Prometheus, etc.)
+    }
+
+    handleError(error) {
+        console.error('PDU Monitoring Error:', error.message);
+    }
+}
+
+// Start the monitoring service
+const monitor = new PDUMonitoringService();
+monitor.start().catch(console.error);
+```
+
+---
+
+## 🔧 Configuration Options
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TRIPPLITE_PDU_HOST` | Required | PDU IP address or hostname |
+| `TRIPPLITE_PDU_PORT` | `443` | PDU HTTPS port |
+| `TRIPPLITE_PDU_USERNAME` | Required | PDU login username |
+| `TRIPPLITE_PDU_PASSWORD` | Required | PDU login password |
+| `TRIPPLITE_PDU_DEVICE_ID` | Required | PDU device identifier |
+| `WS_PORT` | `8081` | WebSocket server port |
+| `WS_MAX_CLIENTS` | `16` | Maximum concurrent clients |
+| `PDU_POLL_INTERVAL` | `5000` | PDU polling interval (ms) |
+| `PDU_MAX_RETRIES` | `3` | Max retry attempts |
+| `PDU_RETRY_DELAY` | `5000` | Retry delay (ms) |
+| `WS_HEARTBEAT_INTERVAL` | `30000` | Client heartbeat interval (ms) |
+| `WS_CLIENT_TIMEOUT` | `60000` | Client timeout (ms) |
+| `WS_DEBUG` | `false` | Enable debug logging |
+
+### Client SDK Options
+
+```javascript
+const client = new TripplitePDUClient({
+    url: 'ws://localhost:8081',        // WebSocket server URL
+    autoReconnect: true,               // Auto-reconnect on disconnect
+    reconnectInterval: 5000,           // Reconnect delay (ms)
+    name: 'MyDashboard',              // Client name for logging
+    
+    // Event handlers
+    onConnect: () => {},               // Connected to server
+    onDisconnect: (code, reason) => {},// Disconnected from server
+    onStateChange: (change) => {},     // Load state changed
+    onActionResult: (result) => {},    // Action completed
+    onPDUStatus: (status) => {},       // PDU connection status
+    onError: (error) => {}             // Error occurred
 });
 ```
 
-**Environment Variables:**
-- `TRIPPLITE_PDU_HOST` - PDU IP address or hostname
-- `TRIPPLITE_PDU_PORT` - PDU port (default: 443)
-- `TRIPPLITE_PDU_USERNAME` - Authentication username
-- `TRIPPLITE_PDU_PASSWORD` - Authentication password
-- `TRIPPLITE_PDU_DEVICE_ID` - Device ID (default: 1)
+---
 
-## Usage
+## 📡 WebSocket Protocol
+
+### Client → Server Messages
+
+**Subscribe to loads:**
+```json
+{
+    "type": "subscribe",
+    "loadIds": ["1", "2", "3"]
+}
+```
+
+**Send action:**
+```json
+{
+    "type": "action",
+    "loadId": "1",
+    "action": "on",
+    "byName": false
+}
+```
+
+**Ping server:**
+```json
+{
+    "type": "ping",
+    "timestamp": "2025-01-01T12:00:00Z"
+}
+```
+
+### Server → Client Messages
+
+**State change notification:**
+```json
+{
+    "type": "stateChange",
+    "loadId": "1",
+    "name": "Load01",
+    "previousState": "LOAD_STATE_OFF",
+    "currentState": "LOAD_STATE_ON",
+    "timestamp": "2025-01-01T12:00:00Z"
+}
+```
+
+**Action result:**
+```json
+{
+    "type": "actionResult",
+    "loadId": "1",
+    "action": "on",
+    "success": true,
+    "timestamp": "2025-01-01T12:00:00Z"
+}
+```
+
+---
+
+## 🚀 Deployment
+
+### Production Deployment
+
+**1. Using PM2 (Recommended):**
+```bash
+# Install PM2
+npm install -g pm2
+
+# Create ecosystem file
+cat > ecosystem.config.js << EOF
+module.exports = {
+  apps: [{
+    name: 'tripplite-pdu-server',
+    script: 'node_modules/@jaarnio/tripplite-pdu-sdk/websocket-server/start-server.js',
+    instances: 1,
+    autorestart: true,
+    watch: false,
+    max_memory_restart: '1G',
+    env: {
+      NODE_ENV: 'production'
+    }
+  }]
+}
+EOF
+
+# Start with PM2
+pm2 start ecosystem.config.js
+pm2 save
+pm2 startup
+```
+
+**2. Using Docker:**
+```dockerfile
+FROM node:18-alpine
+
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+
+COPY .env ./
+EXPOSE 8081
+
+CMD ["npm", "run", "server"]
+```
+
+**3. Using systemd service:**
+```ini
+[Unit]
+Description=Tripplite PDU WebSocket Server
+After=network.target
+
+[Service]
+Type=simple
+User=nodejs
+WorkingDirectory=/opt/tripplite-pdu
+ExecStart=/usr/bin/node node_modules/@jaarnio/tripplite-pdu-sdk/websocket-server/start-server.js
+Restart=always
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
+```
+
+---
+
+## 🧪 Testing
+
+**Test client connection:**
+```bash
+npm run client:test
+```
+
+**Test action commands:**
+```bash
+npm run client:actions
+```
+
+**Debug mode:**
+```bash
+npm run server:dev
+```
+
+---
+
+## 🤝 Integration Examples
+
+### Express.js REST API Bridge
+
+```javascript
+const express = require('express');
+const TripplitePDUClient = require('@jaarnio/tripplite-pdu-sdk/websocket-server/client-sdk');
+
+const app = express();
+app.use(express.json());
+
+const pduClient = new TripplitePDUClient({
+    url: 'ws://localhost:8081'
+});
+
+// REST endpoints
+app.get('/api/loads', (req, res) => {
+    res.json(pduClient.getAllLoadStates());
+});
+
+app.post('/api/loads/:id/action', async (req, res) => {
+    const { id } = req.params;
+    const { action } = req.body;
+    
+    const success = pduClient.sendAction(id, action);
+    res.json({ success, loadId: id, action });
+});
+
+pduClient.connect().then(() => {
+    pduClient.subscribe([1, 2, 3, 4, 5, 6, 7, 8]);
+    app.listen(3000, () => console.log('REST API listening on port 3000'));
+});
+```
+
+### React Dashboard Component
+
+```jsx
+import React, { useState, useEffect } from 'react';
+
+const PDUDashboard = () => {
+    const [loads, setLoads] = useState({});
+    const [connected, setConnected] = useState(false);
+    const [ws, setWs] = useState(null);
+
+    useEffect(() => {
+        const websocket = new WebSocket('ws://localhost:8081');
+        
+        websocket.onopen = () => {
+            setConnected(true);
+            websocket.send(JSON.stringify({
+                type: 'subscribe',
+                loadIds: ['1', '2', '3', '4']
+            }));
+        };
+
+        websocket.onmessage = (event) => {
+            const message = JSON.parse(event.data);
+            
+            if (message.type === 'subscribed') {
+                const loadMap = {};
+                message.currentStates.forEach(load => {
+                    loadMap[load.loadId] = load;
+                });
+                setLoads(loadMap);
+            } else if (message.type === 'stateChange') {
+                setLoads(prev => ({
+                    ...prev,
+                    [message.loadId]: {
+                        ...prev[message.loadId],
+                        state: message.currentState
+                    }
+                }));
+            }
+        };
+
+        websocket.onclose = () => setConnected(false);
+        setWs(websocket);
+
+        return () => websocket.close();
+    }, []);
+
+    const sendAction = (loadId, action) => {
+        if (ws && connected) {
+            ws.send(JSON.stringify({
+                type: 'action',
+                loadId,
+                action
+            }));
+        }
+    };
+
+    return (
+        <div className="pdu-dashboard">
+            <h2>PDU Dashboard {connected ? '🟢' : '🔴'}</h2>
+            <div className="loads-grid">
+                {Object.values(loads).map(load => (
+                    <div key={load.id} className={`load-card ${load.state === 'LOAD_STATE_ON' ? 'on' : 'off'}`}>
+                        <h3>Load {load.id}</h3>
+                        <p>{load.name}</p>
+                        <p>Status: <strong>{load.state === 'LOAD_STATE_ON' ? 'ON' : 'OFF'}</strong></p>
+                        <div className="actions">
+                            <button onClick={() => sendAction(load.id, 'on')}>ON</button>
+                            <button onClick={() => sendAction(load.id, 'off')}>OFF</button>
+                            {load.state === 'LOAD_STATE_ON' && (
+                                <button onClick={() => sendAction(load.id, 'cycle')}>CYCLE</button>
+                            )}
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+};
+
+export default PDUDashboard;
+```
+
+---
+
+## 📚 API Reference
+
+### Core SDK (Direct PDU Access)
 
 ```javascript
 const TripplitePDU = require('@jaarnio/tripplite-pdu-sdk');
 
-// Create client (configuration via environment variables or constructor options)
-const pdu = new TripplitePDU();
+// Basic usage
+const pdu = new TripplitePDU({
+    host: '192.168.1.100',
+    port: 443,
+    username: 'admin',
+    password: 'password',
+    deviceId: 'PDU001'
+});
 
-// Example: Get all loads
-async function getAllLoads() {
-  try {
-    const loads = await pdu.getAllLoads();
-    console.log('Loads:', loads);
-  } catch (error) {
-    console.error('Error getting loads:', error.message);
-  }
-}
-
-// Example: Perform an action on a load by ID
-async function turnOnLoad(loadId) {
-  try {
-    const result = await pdu.performLoadActionById(loadId, 'on');
-    console.log(`Load ${loadId} turned on:`, result);
-    
-    // If you want to get the status after the action
-    const status = await pdu.getLoadById(loadId);
-    console.log(`Load ${loadId} status:`, status);
-  } catch (error) {
-    console.error(`Error turning on load ${loadId}:`, error.message);
-  }
-}
-
-// Example: Perform an action on a load by name
-async function cycleLoadByName(loadName) {
-  try {
-    const result = await pdu.performLoadActionByName(loadName, 'cycle');
-    console.log(`Load "${loadName}" cycled:`, result);
-    
-    // If you want to get the status after the action
-    // Wait a moment for the action to take effect
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    const status = await pdu.getLoadByName(loadName);
-    console.log(`Load "${loadName}" status:`, status);
-  } catch (error) {
-    console.error(`Error cycling load "${loadName}":`, error.message);
-  }
-}
-
-// Don't forget to logout when done to free up session slots
-async function cleanup() {
-  try {
-    await pdu.logout();
-    console.log('Successfully logged out');
-  } catch (error) {
-    console.error('Error during logout:', error.message);
-  }
-}
+// Or use environment variables
+const pdu = new TripplitePDU(); // Reads from .env
 ```
 
-## API Reference
-
-### Constructor
+### WebSocket Client SDK
 
 ```javascript
-new TripplitePDU([options])
+const TripplitePDUClient = require('@jaarnio/tripplite-pdu-sdk/websocket-server/client-sdk');
+
+const client = new TripplitePDUClient(options);
+await client.connect();
+client.subscribe([1, 2, 3]);
+client.sendAction(1, 'on');
+const state = client.getLoadState(1);
+client.disconnect();
 ```
 
-Creates a new PDU client instance.
+---
 
-**Parameters:**
+## ⚠️ Troubleshooting
 
-- `options` (Object, optional): Configuration options. If not provided, configuration will be loaded from environment variables.
-  - `host` (string): IP address or hostname of the PDU. Can also be set via `TRIPPLITE_PDU_HOST` environment variable.
-  - `port` (number): Port number (default: 443). Can also be set via `TRIPPLITE_PDU_PORT` environment variable.
-  - `username` (string): Username for authentication. Can also be set via `TRIPPLITE_PDU_USERNAME` environment variable.
-  - `password` (string): Password for authentication. Can also be set via `TRIPPLITE_PDU_PASSWORD` environment variable.
-  - `deviceId` (number): Device ID (default: 1). Can also be set via `TRIPPLITE_PDU_DEVICE_ID` environment variable.
+**Common Issues:**
 
-Constructor options take precedence over environment variables. At minimum, `host`, `username`, and `password` must be provided either via options or environment variables.
+1. **"Connection failed"** - Check PDU IP, credentials, and network connectivity
+2. **"Token expired"** - Server automatically handles re-authentication
+3. **"WebSocket connection refused"** - Ensure server is running on correct port
+4. **"No state updates"** - Check if client is properly subscribed to loads
 
-### Methods
+**Debug Mode:**
+```bash
+WS_DEBUG=true npm run server
+```
 
-#### `getAllLoads()`
+---
 
-Get all loads and their status.
+## 📝 License
 
-**Returns:** Promise resolving to an array of load objects.
+MIT License - see LICENSE file for details.
 
-#### `getLoadById(id)`
+---
 
-Get a load's status by ID.
+## 🤝 Contributing
 
-**Parameters:**
-- `id` (string|number): The load ID
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
-**Returns:** Promise resolving to a load object.
+---
 
-#### `getLoadByName(name)`
+## 📞 Support
 
-Get a load's status by name.
-
-**Parameters:**
-- `name` (string): The load name
-
-**Returns:** Promise resolving to a load object.
-
-#### `updateLoad(id, name, description)`
-
-Update a load's name and description.
-
-**Parameters:**
-- `id` (string|number): The load ID
-- `name` (string): New name
-- `description` (string): New description
-
-**Returns:** Promise resolving to the updated load object.
-
-#### `performLoadActionById(id, action)`
-
-Perform an action on a load by ID.
-
-**Parameters:**
-- `id` (string|number): The load ID
-- `action` (string): The action to perform. One of: 'on', 'off', 'cycle'
-
-**Returns:** Promise resolving to the action response.
-
-#### `performLoadActionByName(name, action)`
-
-Perform an action on a load by name.
-
-**Parameters:**
-- `name` (string): The load name
-- `action` (string): The action to perform. One of: 'on', 'off', 'cycle'
-
-**Returns:** Promise resolving to the action response.
-
-#### `logout()`
-
-Explicitly logout and revoke the authentication token to free up a session slot on the PDU. 
-
-**Important:** Call this method when you're done using the PDU to prevent "Maximum number of sessions has been reached" errors in future connections.
-
-**Returns:** Promise resolving when logout is complete.
-
-## Architecture
-
-This SDK follows a service-oriented architecture:
-
-- **Main Module**: Provides the client interface
-- **Auth Service**: Handles authentication and token management
-- **Load Service**: Manages operations related to PDU loads (outlets)
-- **Config Service**: Manages configuration settings
-- **Error Handler**: Provides consistent error handling
-
-The services are implemented as singletons to maintain state across operations.
-
-## Error Handling
-
-All methods return promises that resolve with the requested data or reject with detailed error information. Errors include the original error, HTTP status code (if applicable), and response data to help with debugging.
-
-## License
-
-MIT 
+- **GitHub Issues**: [Report bugs or request features](https://github.com/jaarnio/tripplite-pdu-sdk/issues)
+- **Documentation**: Full API documentation available in `/docs`
+- **Examples**: Additional examples in `/examples` directory 

@@ -1,13 +1,14 @@
-// Test WebSocket Client
+// Test WebSocket Client - PDU Port 1 Listener
 const WebSocket = require('ws');
 
 class TestClient {
-    constructor(url = 'ws://localhost:8080', name = 'TestClient') {
+    constructor(url = 'ws://localhost:8081', name = 'PDU-Listener') {
         this.url = url;
         this.name = name;
         this.ws = null;
         this.connected = false;
         this.clientId = null;
+        this.subscribedLoads = [];
     }
 
     /**
@@ -21,7 +22,7 @@ class TestClient {
 
             this.ws.on('open', () => {
                 this.connected = true;
-                console.log(`[${this.name}] Connected successfully`);
+                console.log(`[${this.name}] ✅ Connected successfully`);
                 resolve();
             });
 
@@ -31,35 +32,95 @@ class TestClient {
 
             this.ws.on('close', (code, reason) => {
                 this.connected = false;
-                console.log(`[${this.name}] Disconnected: ${code} ${reason}`);
+                console.log(`[${this.name}] ❌ Disconnected: ${code} ${reason}`);
             });
 
             this.ws.on('error', (error) => {
-                console.error(`[${this.name}] Error: ${error.message}`);
+                console.error(`[${this.name}] ❌ Error: ${error.message}`);
                 reject(error);
             });
 
-            // Timeout after 5 seconds
+            // Timeout after 10 seconds
             setTimeout(() => {
                 if (!this.connected) {
                     reject(new Error('Connection timeout'));
                 }
-            }, 5000);
+            }, 10000);
         });
     }
 
     /**
-     * Handle incoming message
+     * Handle incoming message with enhanced formatting
      */
     handleMessage(data) {
         try {
             const message = JSON.parse(data.toString());
-            console.log(`[${this.name}] Received:`, JSON.stringify(message, null, 2));
+            const timestamp = new Date().toLocaleTimeString();
 
-            // Store client ID from welcome message
-            if (message.type === 'welcome') {
-                this.clientId = message.clientId;
-                console.log(`[${this.name}] Assigned client ID: ${this.clientId}`);
+            switch (message.type) {
+                case 'welcome':
+                    this.clientId = message.clientId;
+                    console.log(`[${timestamp}] [${this.name}] 🎉 Welcome! Client ID: ${this.clientId}`);
+                    console.log(`[${timestamp}] [${this.name}] 📋 Server Config:`, {
+                        maxClients: message.config.maxClients,
+                        heartbeat: message.config.heartbeatInterval + 'ms',
+                        availableLoads: message.config.availableLoads.length
+                    });
+                    break;
+
+                case 'subscribed':
+                    this.subscribedLoads = message.loadIds;
+                    console.log(`[${timestamp}] [${this.name}] 📡 Subscribed to loads: [${message.loadIds.join(', ')}]`);
+                    console.log(`[${timestamp}] [${this.name}] 📊 Current States:`);
+                    message.currentStates.forEach(state => {
+                        console.log(`    Load ${state.loadId} (${state.name}): ${state.state}`);
+                    });
+                    break;
+
+                case 'stateChange':
+                    console.log(`[${timestamp}] [${this.name}] 🔄 STATE CHANGE DETECTED!`);
+                    console.log(`    Load ID: ${message.loadId}`);
+                    console.log(`    Previous: ${message.previousState}`);
+                    console.log(`    Current: ${message.currentState}`);
+                    console.log(`    Changed at: ${message.timestamp}`);
+                    break;
+
+                case 'heartbeat':
+                    // Only show heartbeat every 5th time to reduce noise
+                    if (!this.heartbeatCount) this.heartbeatCount = 0;
+                    this.heartbeatCount++;
+                    if (this.heartbeatCount % 5 === 0) {
+                        console.log(`[${timestamp}] [${this.name}] 💓 Heartbeat (${this.heartbeatCount}) - Connected clients: ${message.stats.connectedClients}`);
+                    }
+                    break;
+
+                case 'pong':
+                    console.log(`[${timestamp}] [${this.name}] 🏓 Pong received`);
+                    break;
+
+                case 'pduStatus':
+                    if (message.status === 'connected') {
+                        console.log(`[${timestamp}] [${this.name}] 🔌 PDU RECONNECTED: ${message.message || 'PDU is back online'}`);
+                    } else if (message.status === 'disconnected') {
+                        console.log(`[${timestamp}] [${this.name}] ⚠️  PDU DISCONNECTED: ${message.error || 'PDU connection lost'}`);
+                    }
+                    break;
+
+                case 'actionResult':
+                    console.log(`[${timestamp}] [${this.name}] ⚡ Action Result:`, {
+                        loadId: message.loadId,
+                        action: message.action,
+                        success: message.success,
+                        error: message.error
+                    });
+                    break;
+
+                case 'error':
+                    console.error(`[${timestamp}] [${this.name}] ❌ Server Error: ${message.error}`);
+                    break;
+
+                default:
+                    console.log(`[${timestamp}] [${this.name}] 📨 Unknown message:`, message.type);
             }
         } catch (error) {
             console.error(`[${this.name}] Failed to parse message:`, error.message);
@@ -77,7 +138,6 @@ class TestClient {
 
         try {
             this.ws.send(JSON.stringify(message));
-            console.log(`[${this.name}] Sent:`, JSON.stringify(message, null, 2));
             return true;
         } catch (error) {
             console.error(`[${this.name}] Failed to send message:`, error.message);
@@ -89,19 +149,11 @@ class TestClient {
      * Subscribe to specific load IDs
      */
     subscribe(loadIds) {
+        const timestamp = new Date().toLocaleTimeString();
+        console.log(`[${timestamp}] [${this.name}] 📡 Subscribing to loads: [${loadIds.join(', ')}]`);
         return this.send({
             type: 'subscribe',
             loadIds: loadIds,
-            clientId: this.clientId
-        });
-    }
-
-    /**
-     * Unsubscribe from all loads
-     */
-    unsubscribe() {
-        return this.send({
-            type: 'unsubscribe',
             clientId: this.clientId
         });
     }
@@ -113,15 +165,6 @@ class TestClient {
         return this.send({
             type: 'ping',
             timestamp: new Date().toISOString()
-        });
-    }
-
-    /**
-     * Request server stats
-     */
-    getStats() {
-        return this.send({
-            type: 'getStats'
         });
     }
 
@@ -143,68 +186,54 @@ class TestClient {
     }
 }
 
-// Test function
-async function runTests() {
-    console.log('=== WebSocket Client Test ===\n');
+// PDU Port 1 Listener - runs continuously
+async function startPDUListener() {
+    console.log('🚀 Starting PDU Port 1 Listener');
+    console.log('================================');
+    console.log('This client will subscribe to PDU Load ID "1" and monitor for state changes.');
+    console.log('Make changes to your PDU and watch for real-time updates!');
+    console.log('Press Ctrl+C to stop.\n');
 
     try {
-        // Test 1: Basic connection
-        console.log('Test 1: Basic Connection');
-        const client1 = new TestClient('ws://localhost:8080', 'Client1');
-        await client1.connect();
-        await client1.wait(1000);
-
-        // Test 2: Subscription
-        console.log('\nTest 2: Subscription');
-        client1.subscribe(['1', '5', '12']);
-        await client1.wait(2000);
-
-        // Test 3: Ping/Pong
-        console.log('\nTest 3: Ping/Pong');
-        client1.ping();
-        await client1.wait(1000);
-
-        // Test 4: Stats request
-        console.log('\nTest 4: Stats Request');
-        client1.getStats();
-        await client1.wait(2000);
-
-        // Test 5: Multiple clients
-        console.log('\nTest 5: Multiple Clients');
-        const client2 = new TestClient('ws://localhost:8080', 'Client2');
-        const client3 = new TestClient('ws://localhost:8080', 'Client3');
+        const client = new TestClient('ws://localhost:8081', 'PDU-Port-1-Listener');
         
-        await client2.connect();
-        await client3.connect();
+        // Connect to server
+        await client.connect();
+        await client.wait(1000);
+
+        // Subscribe to Load ID "1" (PDU Port 1)
+        client.subscribe(['1']);
         
-        client2.subscribe(['2', '8']);
-        client3.subscribe(['1', '16']);
-        
-        await client1.wait(3000);
+        // Keep the client running and listening
+        console.log('\n👂 Listening for state changes on Load ID "1"...');
+        console.log('   (Change the state of Load ID "1" on your PDU to see real-time updates)\n');
 
-        // Test 6: Unsubscribe
-        console.log('\nTest 6: Unsubscribe');
-        client2.unsubscribe();
-        await client1.wait(2000);
+        // Send periodic pings to keep connection alive and test responsiveness
+        setInterval(() => {
+            if (client.connected) {
+                client.ping();
+            }
+        }, 60000); // Ping every 60 seconds
 
-        // Clean up
-        console.log('\nCleaning up...');
-        client1.disconnect();
-        client2.disconnect();
-        client3.disconnect();
+        // Handle graceful shutdown
+        process.on('SIGINT', () => {
+            console.log('\n\n🛑 Received interrupt signal, disconnecting...');
+            client.disconnect();
+            process.exit(0);
+        });
 
-        console.log('\n=== Tests completed successfully ===');
+        // Keep the process alive
+        process.stdin.resume();
 
     } catch (error) {
-        console.error('\n=== Test failed ===');
-        console.error('Error:', error.message);
+        console.error('\n❌ Failed to start PDU listener:', error.message);
         process.exit(1);
     }
 }
 
-// Run tests if this file is executed directly
+// Export for use as module or run directly
 if (require.main === module) {
-    runTests().catch(console.error);
+    startPDUListener().catch(console.error);
 }
 
 module.exports = TestClient; 

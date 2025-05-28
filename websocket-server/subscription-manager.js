@@ -166,6 +166,16 @@ class SubscriptionManager {
     }
 
     /**
+     * Get list of client IDs subscribed to a specific load
+     * @param {string} loadId - Load identifier
+     * @returns {Array<string>} Array of client IDs subscribed to this load
+     */
+    getClientsForLoad(loadId) {
+        const subscribers = this.subscriptions.get(loadId.toString());
+        return subscribers ? Array.from(subscribers) : [];
+    }
+
+    /**
      * Mark client as disconnected
      * @param {string} clientId - Client identifier
      */

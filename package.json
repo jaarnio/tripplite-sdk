@@ -1,12 +1,13 @@
 {
   "name": "@jaarnio/tripplite-pdu-sdk",
-  "version": "1.2.0",
-  "description": "SDK for interacting with Tripplite PDU devices",
+  "version": "1.3.0",
+  "description": "SDK for interacting with Tripplite PDU devices with WebSocket server for real-time monitoring",
   "main": "dist/index.js",
   "types": "types/index.d.ts",
   "files": [
     "dist",
     "types",
+    "websocket-server",
     "README.md",
     ".env.example"
   ],
@@ -17,16 +18,27 @@
     "prepare": "npm run build",
     "docs": "jsdoc -c jsdoc.json",
     "lint": "eslint src",
+    "server": "node websocket-server/start-server.js",
+    "server:dev": "WS_DEBUG=true node websocket-server/start-server.js",
+    "client:test": "node websocket-server/tests/client-test.js",
+    "client:actions": "node websocket-server/tests/action-test-client.js",
     "ws:start": "node websocket-server/start-server.js",
     "ws:test": "node websocket-server/tests/client-test.js",
-    "ws:dev": "ENABLE_DEBUG=true LOG_LEVEL=debug node websocket-server/start-server.js"
+    "ws:dev": "WS_DEBUG=true node websocket-server/start-server.js"
+  },
+  "bin": {
+    "tripplite-server": "./websocket-server/start-server.js"
   },
   "keywords": [
     "tripplite",
     "pdu",
     "power",
     "management",
-    "sdk"
+    "sdk",
+    "websocket",
+    "real-time",
+    "monitoring",
+    "dashboard"
   ],
   "author": "jaarnio",
   "license": "MIT",
