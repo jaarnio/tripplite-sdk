@@ -1,5 +1,13 @@
 {
-  "presets": ["@babel/preset-env"],
-  "ignore": ["**/*.test.js", "**/__tests__"],
-  "sourceMaps": true
+  "presets": [
+    ["@babel/preset-env", { "targets": { "node": "current" } }]
+  ],
+  "sourceMaps": true,
+  "env": {
+    "test": {
+      "presets": [
+        ["@babel/preset-env", { "targets": { "node": "current" } }]
+      ]
+    }
+  }
 } 

@@ -1,14 +1,23 @@
-// Tripplite PDU WebSocket Client SDK
-// Easy-to-use client library for building dashboards and applications
-
+// Simple client SDK for connecting to TripplitePDUServer
 const WebSocket = require('ws');
 
 class TripplitePDUClient {
+    /**
+     * Create a new client to connect to TripplitePDUServer
+     * @param {Object} options Configuration options
+     * @param {string} [options.url='ws://localhost:8081'] WebSocket server URL
+     * @param {boolean} [options.autoReconnect=true] Whether to automatically reconnect
+     * @param {number} [options.reconnectInterval=5000] Reconnection interval in ms
+     * @param {Function} [options.onConnect] Callback when connected
+     * @param {Function} [options.onDisconnect] Callback when disconnected
+     * @param {Function} [options.onStateChange] Callback when load state changes
+     * @param {Function} [options.onActionResult] Callback when action completes
+     * @param {Function} [options.onError] Callback for errors
+     */
     constructor(options = {}) {
         this.url = options.url || 'ws://localhost:8081';
         this.autoReconnect = options.autoReconnect !== false;
         this.reconnectInterval = options.reconnectInterval || 5000;
-        this.name = options.name || 'PDUClient';
         
         this.ws = null;
         this.connected = false;
@@ -21,7 +30,6 @@ class TripplitePDUClient {
         this.onDisconnect = options.onDisconnect || (() => {});
         this.onStateChange = options.onStateChange || (() => {});
         this.onActionResult = options.onActionResult || (() => {});
-        this.onPDUStatus = options.onPDUStatus || (() => {});
         this.onError = options.onError || ((error) => console.error('PDU Client Error:', error));
         
         // State tracking
@@ -29,38 +37,39 @@ class TripplitePDUClient {
     }
 
     /**
-     * Connect to the WebSocket server
+     * Connect to the PDU server
      * @returns {Promise<void>}
      */
     connect() {
         return new Promise((resolve, reject) => {
             try {
+                console.log(`Connecting to ${this.url}...`);
                 this.ws = new WebSocket(this.url);
 
                 this.ws.on('open', () => {
                     this.connected = true;
-                    this.log('Connected to PDU WebSocket server');
+                    console.log('Connected to PDU server');
                     this.onConnect();
                     resolve();
                 });
 
                 this.ws.on('message', (data) => {
-                    this.handleMessage(data);
+                    this._handleMessage(data);
                 });
 
                 this.ws.on('close', (code, reason) => {
                     this.connected = false;
                     this.clientId = null;
-                    this.log(`Disconnected: ${code} ${reason}`);
+                    console.log(`Disconnected: ${code} ${reason}`);
                     this.onDisconnect(code, reason);
                     
                     if (this.autoReconnect) {
-                        this.scheduleReconnect();
+                        this._scheduleReconnect();
                     }
                 });
 
                 this.ws.on('error', (error) => {
-                    this.log(`WebSocket error: ${error.message}`);
+                    console.error(`WebSocket error: ${error.message}`);
                     this.onError(error);
                     if (!this.connected) {
                         reject(error);
@@ -95,7 +104,7 @@ class TripplitePDUClient {
     }
 
     /**
-     * Subscribe to specific load IDs
+     * Subscribe to specific load IDs for real-time updates
      * @param {Array<string|number>} loadIds - Array of load IDs to monitor
      * @returns {boolean} Success
      */
@@ -106,18 +115,17 @@ class TripplitePDUClient {
         }
 
         this.subscribedLoads = loadIds.map(id => id.toString());
-        return this.send({
+        return this._send({
             type: 'subscribe',
-            loadIds: this.subscribedLoads,
-            clientId: this.clientId
+            loadIds: this.subscribedLoads
         });
     }
 
     /**
      * Send action to control a load
      * @param {string|number} loadId - Load ID to control
-     * @param {string} action - Action: 'on', 'off', or 'cycle'
-     * @param {boolean} byName - Whether loadId is a name instead of ID
+     * @param {'on'|'off'|'cycle'} action - Action to perform
+     * @param {boolean} [byName=false] - Whether loadId is a name instead of ID
      * @returns {boolean} Success
      */
     sendAction(loadId, action, byName = false) {
@@ -131,12 +139,11 @@ class TripplitePDUClient {
             return false;
         }
 
-        return this.send({
+        return this._send({
             type: 'action',
             loadId: loadId.toString(),
             action: action,
-            byName: byName,
-            timestamp: new Date().toISOString()
+            byName: byName
         });
     }
 
@@ -162,29 +169,24 @@ class TripplitePDUClient {
     }
 
     /**
-     * Send ping to server
-     * @returns {boolean} Success
-     */
-    ping() {
-        return this.send({
-            type: 'ping',
-            timestamp: new Date().toISOString()
-        });
-    }
-
-    /**
      * Get server statistics
      * @returns {boolean} Success
      */
     getStats() {
-        return this.send({
-            type: 'getStats'
-        });
+        return this._send({ type: 'getStats' });
+    }
+
+    /**
+     * Send ping to server
+     * @returns {boolean} Success
+     */
+    ping() {
+        return this._send({ type: 'ping' });
     }
 
     // Private methods
 
-    send(message) {
+    _send(message) {
         if (!this.connected || !this.ws) {
             return false;
         }
@@ -198,126 +200,71 @@ class TripplitePDUClient {
         }
     }
 
-    handleMessage(data) {
+    _handleMessage(data) {
         try {
             const message = JSON.parse(data.toString());
 
             switch (message.type) {
                 case 'welcome':
                     this.clientId = message.clientId;
-                    this.log(`Received client ID: ${this.clientId}`);
+                    console.log(`Connected as client: ${this.clientId}`);
                     break;
 
                 case 'subscribed':
-                    this.log(`Subscribed to loads: [${message.loadIds.join(', ')}]`);
-                    
+                    console.log(`Subscribed to loads: [${message.loadIds.join(', ')}]`);
                     // Store initial states
-                    if (message.currentStates) {
-                        message.currentStates.forEach(state => {
-                            this.loadStates.set(state.loadId, {
-                                id: state.loadId,
-                                name: state.name,
-                                description: state.description,
-                                state: state.state,
-                                lastUpdated: state.lastUpdated
-                            });
-                        });
-                    }
+                    message.currentStates.forEach(state => {
+                        this.loadStates.set(state.id, state);
+                    });
                     break;
 
                 case 'stateChange':
-                    // Update local state
-                    this.loadStates.set(message.loadId, {
-                        id: message.loadId,
-                        name: message.name,
-                        description: message.description,
-                        state: message.currentState,
-                        lastUpdated: message.timestamp
-                    });
-                    
-                    // Call handler
-                    this.onStateChange({
-                        loadId: message.loadId,
-                        name: message.name,
-                        description: message.description,
-                        previousState: message.previousState,
-                        currentState: message.currentState,
-                        timestamp: message.timestamp
-                    });
+                    console.log(`State change: Load ${message.loadId} ${message.previousState} → ${message.currentState}`);
+                    // Update stored state
+                    this.loadStates.set(message.loadId, message.load);
+                    this.onStateChange(message);
                     break;
 
                 case 'actionResult':
-                    this.onActionResult({
-                        loadId: message.loadId,
-                        action: message.action,
-                        success: message.success,
-                        error: message.error,
-                        result: message.result,
-                        timestamp: message.timestamp
-                    });
-                    break;
-
-                case 'pduStatus':
-                    this.onPDUStatus({
-                        status: message.status,
-                        message: message.message,
-                        error: message.error,
-                        timestamp: message.timestamp
-                    });
+                    console.log(`Action result: ${message.action} on Load ${message.loadId} - ${message.success ? 'SUCCESS' : 'FAILED'}`);
+                    this.onActionResult(message);
                     break;
 
                 case 'error':
+                    console.error(`Server error: ${message.error}`);
                     this.onError(new Error(message.error));
                     break;
 
                 case 'pong':
-                case 'heartbeat':
-                    // Silent - these are handled automatically
+                    // Ping response
+                    break;
+
+                case 'stats':
+                    console.log('Server stats:', message.data);
                     break;
 
                 default:
-                    this.log(`Unknown message type: ${message.type}`);
+                    console.warn(`Unknown message type: ${message.type}`);
             }
         } catch (error) {
-            this.onError(new Error(`Failed to parse message: ${error.message}`));
+            console.error('Failed to parse message:', error.message);
+            this.onError(error);
         }
     }
 
-    scheduleReconnect() {
-        if (this.reconnectTimer) {
-            clearTimeout(this.reconnectTimer);
-        }
+    _scheduleReconnect() {
+        if (this.reconnectTimer) return;
 
+        console.log(`Reconnecting in ${this.reconnectInterval}ms...`);
         this.reconnectTimer = setTimeout(() => {
-            this.log('Attempting to reconnect...');
-            this.connect().then(() => {
-                // Re-subscribe to previous loads
-                if (this.subscribedLoads.length > 0) {
-                    setTimeout(() => {
-                        this.subscribe(this.subscribedLoads);
-                    }, 1000);
-                }
-            }).catch((error) => {
-                this.log(`Reconnection failed: ${error.message}`);
+            this.reconnectTimer = null;
+            this.connect().catch(error => {
+                console.error('Reconnection failed:', error.message);
+                this._scheduleReconnect();
             });
         }, this.reconnectInterval);
     }
-
-    log(message) {
-        console.log(`[${new Date().toLocaleTimeString()}] [${this.name}] ${message}`);
-    }
 }
 
-// Browser-compatible version (if in browser environment)
-if (typeof window !== 'undefined') {
-    // Use native WebSocket in browser
-    const OriginalWebSocket = WebSocket;
-    WebSocket = function(url) {
-        return new OriginalWebSocket(url);
-    };
-    
-    // Export for browser
-    window.TripplitePDUClient = TripplitePDUClient;
-}
-
-module.exports = TripplitePDUClient; 
+module.exports = TripplitePDUClient;
+module.exports.default = TripplitePDUClient; 

@@ -1,33 +1,35 @@
 {
   "name": "@jaarnio/tripplite-pdu-sdk",
-  "version": "1.3.0",
-  "description": "SDK for interacting with Tripplite PDU devices with WebSocket server for real-time monitoring",
+  "version": "2.0.0",
+  "description": "Unified Tripplite PDU SDK with integrated real-time WebSocket server for monitoring and control",
   "main": "dist/index.js",
   "types": "types/index.d.ts",
   "files": [
     "dist",
     "types",
-    "websocket-server",
+    "examples",
     "README.md",
     ".env.example"
   ],
+  "exports": {
+    ".": "./dist/index.js",
+    "./client": "./dist/client.js"
+  },
   "scripts": {
     "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
     "prebuild": "rimraf dist",
     "build": "babel src -d dist --copy-files",
     "prepare": "npm run build",
-    "docs": "jsdoc -c jsdoc.json",
-    "lint": "eslint src",
-    "server": "node websocket-server/start-server.js",
-    "server:dev": "WS_DEBUG=true node websocket-server/start-server.js",
-    "client:test": "node websocket-server/tests/client-test.js",
-    "client:actions": "node websocket-server/tests/action-test-client.js",
-    "ws:start": "node websocket-server/start-server.js",
-    "ws:test": "node websocket-server/tests/client-test.js",
-    "ws:dev": "WS_DEBUG=true node websocket-server/start-server.js"
+    "lint": "eslint src examples",
+    "lint:fix": "eslint src examples --fix",
+    "example:server": "node examples/basic-server.js",
+    "example:dashboard": "node examples/dashboard-client.js",
+    "docs": "jsdoc -c jsdoc.json"
   },
   "bin": {
-    "tripplite-server": "./websocket-server/start-server.js"
+    "tripplite-server": "./examples/basic-server.js"
   },
   "keywords": [
     "tripplite",
@@ -38,7 +40,9 @@
     "websocket",
     "real-time",
     "monitoring",
-    "dashboard"
+    "dashboard",
+    "unified",
+    "iot"
   ],
   "author": "jaarnio",
   "license": "MIT",
@@ -66,5 +70,8 @@
   "bugs": {
     "url": "https://github.com/jaarnio/tripplite-pdu-sdk/issues"
   },
-  "homepage": "https://github.com/jaarnio/tripplite-pdu-sdk#readme"
+  "homepage": "https://github.com/jaarnio/tripplite-pdu-sdk#readme",
+  "engines": {
+    "node": ">=14.0.0"
+  }
 }
