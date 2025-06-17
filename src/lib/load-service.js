@@ -10,16 +10,76 @@ class LoadService {
         });
     }
 
+    /**
+     * Make an authenticated API request with automatic token refresh
+     * @param {Object} requestConfig Axios request configuration
+     * @returns {Promise<Object>} API response
+     */
+    async _makeAuthenticatedRequest(requestConfig) {
+        // Ensure we have a valid token before making the request
+        await this._ensureValidToken();
+
+        // Add authentication header
+        requestConfig.headers = requestConfig.headers || {};
+        requestConfig.headers['Authorization'] = `Bearer ${auth.getAccessToken()}`;
+        requestConfig.httpsAgent = this.httpsAgent;
+
+        try {
+            const response = await axios(requestConfig);
+            return response;
+        } catch (error) {
+            // If we get a 401, the token might have expired between our check and the request
+            if (error.response && error.response.status === 401) {
+                console.log('Token expired during request, attempting refresh and retry...');
+                
+                try {
+                    // Try to refresh the token
+                    if (auth.needsRefresh()) {
+                        await auth.refreshAccessToken();
+                    } else {
+                        // If no refresh token, do a full re-login
+                        await auth.login();
+                    }
+                    
+                    // Retry the request with the new token
+                    requestConfig.headers['Authorization'] = `Bearer ${auth.getAccessToken()}`;
+                    return await axios(requestConfig);
+                } catch (refreshError) {
+                    // If refresh fails, throw the original 401 error
+                    throw error;
+                }
+            }
+            
+            // For non-401 errors, throw as-is
+            throw error;
+        }
+    }
+
+    /**
+     * Ensure we have a valid token, refreshing if necessary
+     */
+    async _ensureValidToken() {
+        if (!auth.getAccessToken()) {
+            await auth.login();
+            return;
+        }
+        
+        if (auth.needsRefresh()) {
+            await auth.refreshAccessToken();
+            return;
+        }
+    }
+
     async getAllLoads() {
         try {
             const baseUrl = config.getBaseUrl();
-            const response = await axios.get(`${baseUrl}/loads`, {
+            const response = await this._makeAuthenticatedRequest({
+                method: 'GET',
+                url: `${baseUrl}/loads`,
                 headers: {
-                    'Authorization': `Bearer ${auth.getAccessToken()}`,
                     'Content-Type': 'application/vnd.api+json',
                     'Accept-Version': '1.0.0'
-                },
-                httpsAgent: this.httpsAgent
+                }
             });
 
             // Extract and format the required fields
@@ -56,22 +116,23 @@ class LoadService {
     async updateLoad(loadId, name, description) {
         try {
             const baseUrl = config.getBaseUrl();
-            const response = await axios.patch(`${baseUrl}/loads/${loadId}`, {
+            const response = await this._makeAuthenticatedRequest({
+                method: 'PATCH',
+                url: `${baseUrl}/loads/${loadId}`,
                 data: {
-                    type: "loads",
-                    id: loadId.toString(),
-                    attributes: {
-                        name,
-                        description
+                    data: {
+                        type: "loads",
+                        id: loadId.toString(),
+                        attributes: {
+                            name,
+                            description
+                        }
                     }
-                }
-            }, {
+                },
                 headers: {
-                    'Authorization': `Bearer ${auth.getAccessToken()}`,
                     'Content-Type': 'application/vnd.api+json',
                     'Accept-Version': '1.0.0'
-                },
-                httpsAgent: this.httpsAgent
+                }
             });
             return response.data;
         } catch (error) {
@@ -99,21 +160,22 @@ class LoadService {
             const baseUrl = config.getBaseUrl();
             const deviceId = config.deviceId || 1;
             
-            const response = await axios.patch(`${baseUrl}/loads_execute/${loadId}`, {
+            const response = await this._makeAuthenticatedRequest({
+                method: 'PATCH',
+                url: `${baseUrl}/loads_execute/${loadId}`,
                 data: {
-                    type: "loads_execute",
-                    attributes: {
-                        device_id: deviceId,
-                        load_action: actionMap[action]
+                    data: {
+                        type: "loads_execute",
+                        attributes: {
+                            device_id: deviceId,
+                            load_action: actionMap[action]
+                        }
                     }
-                }
-            }, {
+                },
                 headers: {
-                    'Authorization': `Bearer ${auth.getAccessToken()}`,
                     'Content-Type': 'application/vnd.api+json',
                     'Accept-Version': '1.0.0'
-                },
-                httpsAgent: this.httpsAgent
+                }
             });
             return response.data;
         } catch (error) {
@@ -126,15 +188,15 @@ class LoadService {
             const baseUrl = config.getBaseUrl();
             const deviceId = config.deviceId || 1;
             
-            const response = await axios.get(`${baseUrl}/loads/${name}`, {
+            const response = await this._makeAuthenticatedRequest({
+                method: 'GET',
+                url: `${baseUrl}/loads/${name}`,
                 headers: {
-                    'Authorization': `Bearer ${auth.getAccessToken()}`,
                     'Content-Type': 'application/vnd.api+json',
                     'Accept-Version': '1.0.0',
                     'By': 'name',
                     'deviceId': deviceId.toString()
-                },
-                httpsAgent: this.httpsAgent
+                }
             });
             return response.data;
         } catch (error) {
@@ -145,13 +207,13 @@ class LoadService {
     async getLoadById(id) {
         try {
             const baseUrl = config.getBaseUrl(); 
-            const response = await axios.get(`${baseUrl}/loads/${id}`, {
+            const response = await this._makeAuthenticatedRequest({
+                method: 'GET',
+                url: `${baseUrl}/loads/${id}`,
                 headers: {
-                    'Authorization': `Bearer ${auth.getAccessToken()}`,
                     'Content-Type': 'application/vnd.api+json',
                     'Accept-Version': '1.0.0'
-                },
-                httpsAgent: this.httpsAgent
+                }
             });
             return response.data;
         } catch (error) {

@@ -54,7 +54,7 @@ const client = new TripplitePDUClient({
     }
 });
 
-await client.connect();
+    await client.connect();
 client.subscribe([1, 2, 3, 4]);  // Monitor loads 1-4
 client.sendAction(1, 'on');      // Turn load 1 ON
 ```
@@ -126,7 +126,7 @@ await client.connect();
 
 // Subscribe to specific loads for updates
 client.subscribe([1, 2, 3, 4, 5, 6, 7, 8]);
-
+    
 // Control loads
 client.sendAction(1, 'on');      // Turn ON
 client.sendAction(2, 'off');     // Turn OFF  
@@ -159,7 +159,7 @@ const client = new TripplitePDUClient({
         // Update DOM elements in real-time
         document.getElementById(`load-${change.loadId}`)
             .className = change.currentState === 'LOAD_STATE_ON' ? 'on' : 'off';
-    }
+                }
 });
 ```
 
@@ -174,7 +174,7 @@ const server = new TripplitePDUServer({
 });
 
 await server.start();
-
+        
 // Direct automation logic
 setInterval(async () => {
     const loads = await server.getAllLoads();
@@ -200,7 +200,7 @@ const server = new TripplitePDUServer({
     maxClients: 50      // Support many clients
 });
 await server.start();
-
+        
 // Multiple monitoring clients can connect
 // - Web dashboard
 // - Mobile app
