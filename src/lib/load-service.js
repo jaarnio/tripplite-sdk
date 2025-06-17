@@ -28,16 +28,26 @@ class LoadService {
             const response = await axios(requestConfig);
             return response;
         } catch (error) {
-            // If we get a 401, the token might have expired between our check and the request
+            // Handle authentication errors (401)
             if (error.response && error.response.status === 401) {
-                console.log('Token expired during request, attempting refresh and retry...');
+                const errorMessage = error.response.data?.errors?.[0]?.detail || error.message;
+                console.log(`Authentication error during request: ${errorMessage}`);
                 
                 try {
-                    // Try to refresh the token
-                    if (auth.needsRefresh()) {
+                    // Handle different types of 401 errors
+                    if (errorMessage.includes('Session not found') || errorMessage.includes('session')) {
+                        console.log('Session invalidated, performing full re-authentication...');
+                        // Session was invalidated, force new login
+                        auth.accessToken = null;
+                        auth.refreshToken = null;
+                        auth.tokenExpiry = null;
+                        await auth.login();
+                    } else if (errorMessage.includes('expired') || auth.needsRefresh()) {
+                        console.log('Token expired, attempting refresh...');
                         await auth.refreshAccessToken();
                     } else {
-                        // If no refresh token, do a full re-login
+                        console.log('Other auth error, performing full re-authentication...');
+                        // For other auth errors, try full re-login
                         await auth.login();
                     }
                     
@@ -45,7 +55,8 @@ class LoadService {
                     requestConfig.headers['Authorization'] = `Bearer ${auth.getAccessToken()}`;
                     return await axios(requestConfig);
                 } catch (refreshError) {
-                    // If refresh fails, throw the original 401 error
+                    console.log(`Authentication recovery failed: ${refreshError.message}`);
+                    // If recovery fails, throw the original 401 error
                     throw error;
                 }
             }
@@ -60,12 +71,25 @@ class LoadService {
      */
     async _ensureValidToken() {
         if (!auth.getAccessToken()) {
+            console.log('No access token found, performing login...');
             await auth.login();
             return;
         }
         
         if (auth.needsRefresh()) {
-            await auth.refreshAccessToken();
+            console.log('Token needs refresh, refreshing...');
+            try {
+                await auth.refreshAccessToken();
+            } catch (refreshError) {
+                console.log('Token refresh failed, performing new login...');
+                await auth.login();
+            }
+            return;
+        }
+        
+        if (!auth.isTokenValid()) {
+            console.log('Token is invalid, performing new login...');
+            await auth.login();
             return;
         }
     }

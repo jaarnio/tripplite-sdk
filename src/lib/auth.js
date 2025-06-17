@@ -9,12 +9,17 @@ class AuthService {
         this.tokenExpiry = null;
         // Add a buffer time before token expiry (5 minutes)
         this.tokenExpiryBuffer = 5 * 60 * 1000;
+        
+        // Prevent concurrent token refresh attempts
+        this.refreshInProgress = false;
+        this.refreshPromise = null;
     }
 
     async login(username, password) {
         try {
             // If we already have a valid token, don't create a new session
             if (this.isTokenValid()) {
+                console.log('Using existing valid token');
                 return { access_token: this.accessToken, refresh_token: this.refreshToken };
             }
 
@@ -27,6 +32,8 @@ class AuthService {
                 throw new Error('Username and password are required for authentication');
             }
 
+            console.log('Performing new authentication...');
+            
             // Match the exact format from the example
             const raw = JSON.stringify({
                 username,
@@ -47,9 +54,14 @@ class AuthService {
             this.accessToken = response.data.access_token;
             this.refreshToken = response.data.refresh_token;
             
-            // Set token expiry (default to 1 hour if not specified in response)
-            const expiresIn = response.data.expires_in || 3600;
-            this.tokenExpiry = Date.now() + (expiresIn * 1000);
+
+            
+            // Extract real expiry time from JWT token
+            this.tokenExpiry = this._extractJWTExpiry(this.accessToken);
+            
+            const expiryDate = new Date(this.tokenExpiry);
+            const expiresIn = Math.floor((this.tokenExpiry - Date.now()) / 1000);
+            console.log(`Authentication successful. Token expires in ${expiresIn} seconds at: ${expiryDate.toISOString()}`);
             
             return response.data;
         } catch (error) {
@@ -67,10 +79,33 @@ class AuthService {
 
     async refreshAccessToken() {
         if (!this.refreshToken) {
+            console.log('No refresh token available for refresh');
             throw new Error('No refresh token available');
         }
 
+        // If refresh is already in progress, wait for it to complete
+        if (this.refreshInProgress && this.refreshPromise) {
+            console.log('Token refresh already in progress, waiting...');
+            return await this.refreshPromise;
+        }
+
+        // Set refresh in progress and create promise
+        this.refreshInProgress = true;
+        this.refreshPromise = this._performTokenRefresh();
+
         try {
+            const result = await this.refreshPromise;
+            return result;
+        } finally {
+            // Reset refresh state
+            this.refreshInProgress = false;
+            this.refreshPromise = null;
+        }
+    }
+
+    async _performTokenRefresh() {
+        try {
+            console.log('Refreshing access token...');
             const baseUrl = config.getBaseUrl();
             const response = await axios.post(`${baseUrl}/oauth/token/refresh`, '', {
                 headers: {
@@ -89,15 +124,21 @@ class AuthService {
                 this.refreshToken = response.data.refresh_token;
             }
             
-            // Set token expiry (default to 1 hour if not specified in response)
-            const expiresIn = response.data.expires_in || 3600;
-            this.tokenExpiry = Date.now() + (expiresIn * 1000);
+            // Extract real expiry time from JWT token
+            this.tokenExpiry = this._extractJWTExpiry(this.accessToken);
+            
+            const expiryDate = new Date(this.tokenExpiry);
+            const expiresIn = Math.floor((this.tokenExpiry - Date.now()) / 1000);
+            console.log(`Token refresh successful. New token expires in ${expiresIn} seconds at: ${expiryDate.toISOString()}`);
             
             return response.data;
         } catch (error) {
+            console.log(`Token refresh failed: ${error.response?.status} ${error.response?.statusText || error.message}`);
+            
             // If refresh fails with 401, the refresh token may be invalid or expired
             // Clear tokens to force a new login
             if (error.response && error.response.status === 401) {
+                console.log('Refresh token expired or invalid, clearing tokens');
                 this.accessToken = null;
                 this.refreshToken = null;
                 this.tokenExpiry = null;
@@ -142,7 +183,13 @@ class AuthService {
     }
 
     isTokenValid() {
-        return this.accessToken && this.tokenExpiry && (Date.now() < (this.tokenExpiry - this.tokenExpiryBuffer));
+        if (!this.accessToken || !this.tokenExpiry) {
+            return false;
+        }
+        
+        const now = Date.now();
+        const expiryWithBuffer = this.tokenExpiry - this.tokenExpiryBuffer;
+        return now < expiryWithBuffer;
     }
 
     getAccessToken() {
@@ -151,6 +198,42 @@ class AuthService {
 
     needsRefresh() {
         return this.accessToken && this.tokenExpiry && !this.isTokenValid() && this.refreshToken;
+    }
+
+    /**
+     * Extract expiry time from JWT token
+     * @param {string} token JWT token
+     * @returns {number} Expiry timestamp in milliseconds
+     */
+    _extractJWTExpiry(token) {
+        try {
+            // JWT format: header.payload.signature
+            const parts = token.split('.');
+            if (parts.length !== 3) {
+                console.log('Invalid JWT format, falling back to 1 hour default');
+                return Date.now() + (3600 * 1000);
+            }
+            
+            // Decode the payload (base64url)
+            const payload = parts[1];
+            // Add padding if needed for base64 decoding
+            const padded = payload + '='.repeat((4 - payload.length % 4) % 4);
+            const decoded = Buffer.from(padded.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+            const claims = JSON.parse(decoded.toString());
+            
+            if (claims.exp) {
+                // JWT exp is in seconds, convert to milliseconds
+                const expiryMs = claims.exp * 1000;
+                console.log(`JWT expiry extracted: ${new Date(expiryMs).toISOString()}`);
+                return expiryMs;
+            } else {
+                console.log('No exp claim found in JWT, falling back to 1 hour default');
+                return Date.now() + (3600 * 1000);
+            }
+        } catch (error) {
+            console.log(`Failed to parse JWT token: ${error.message}, falling back to 1 hour default`);
+            return Date.now() + (3600 * 1000);
+        }
     }
 }
 

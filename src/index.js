@@ -466,6 +466,9 @@ class TripplitePDUServer {
             this.stats.pollCount++;
             this.log('debug', `Polling PDU... (poll #${this.stats.pollCount})`);
             
+            // Ensure we have valid authentication before polling
+            await this._ensureAuthenticated();
+            
             const currentLoads = await this.getAllLoads();
             const changes = this._detectStateChanges(currentLoads);
             
@@ -481,15 +484,23 @@ class TripplitePDUServer {
         } catch (error) {
             this.stats.errors++;
             
-            // Handle authentication errors
-            if (error.message.includes('401') || error.message.includes('Unauthorized')) {
-                this.log('warn', 'Authentication token expired, attempting re-authentication...');
+            // Handle authentication errors more comprehensively
+            if (error.message.includes('401') || error.message.includes('Unauthorized') || 
+                error.message.includes('Authentication') || error.message.includes('token')) {
+                this.log('warn', `Authentication issue detected: ${error.message}`);
                 try {
+                    // Force a fresh login instead of just refresh
+                    authInstance.accessToken = null;
+                    authInstance.refreshToken = null;
+                    authInstance.tokenExpiry = null;
+                    
                     await authInstance.login();
-                    this.log('info', 'Re-authentication successful');
+                    this.log('info', 'Re-authentication successful after error');
                 } catch (authError) {
                     this.log('error', `Re-authentication failed: ${authError.message}`);
                 }
+            } else if (error.message.includes('ECONNREFUSED') || error.message.includes('ENOTFOUND')) {
+                this.log('error', `Network connectivity issue: ${error.message}`);
             } else {
                 this.log('error', `PDU poll failed: ${error.message}`);
             }

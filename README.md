@@ -11,6 +11,18 @@ A modern, easy-to-use Node.js SDK that provides **both direct API access and rea
 - **🔧 Simple Setup**: Configure once, start once - works out of the box
 - **📱 Batteries Included**: Server and client SDKs for complete solutions
 - **🎪 Easy Integration**: Drop into existing applications with minimal code
+- **🔐 Seamless Authentication**: Automatic JWT token management and refresh - no manual intervention
+
+## 🔐 Authentication & Reliability
+
+**The SDK handles all authentication automatically:**
+- ✅ **Automatic JWT token parsing** - reads real expiry time from tokens
+- ✅ **Proactive token refresh** - refreshes tokens before expiry  
+- ✅ **Error recovery** - handles 401 errors with seamless re-authentication
+- ✅ **Production ready** - tested with persistent long-running applications
+- ✅ **Zero maintenance** - consumers never deal with auth issues
+
+*Your applications will run indefinitely without authentication interruptions.*
 
 ---
 

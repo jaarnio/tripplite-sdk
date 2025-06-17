@@ -1,6 +1,6 @@
 {
   "name": "@jaarnio/tripplite-pdu-sdk",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Unified Tripplite PDU SDK with integrated real-time WebSocket server for monitoring and control",
   "main": "dist/index.js",
   "types": "types/index.d.ts",
@@ -19,6 +19,10 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
+    "test:integration": "node run-integration-test.js",
+    "test:integration-short": "node test/short-integration-demo.js",
+    "test:integration-persistent": "node test/persistent-integration-test.js",
+    "test:integration-15min": "node test/long-running-integration.js",
     "prebuild": "rimraf dist",
     "build": "babel src -d dist --copy-files",
     "prepare": "npm run build",
